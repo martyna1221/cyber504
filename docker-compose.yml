@@ -4,7 +4,12 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:latest
     container_name: keycloak
-    command: start-dev
+    command: >
+      start-dev
+      -Dkeycloak.migration.action=import
+      -Dkeycloak.migration.provider=singleFile
+      -Dkeycloak.migration.file=/tmp/realm-export.json
+      -Dkeycloak.migration.strategy=OVERWRITE_EXISTING
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
@@ -15,6 +20,8 @@ services:
       - "8080:8080"
     volumes:
       - keycloak_data:/opt/keycloak/data
+      - ./realm-export.json:/tmp/realm-export.json
+
   vault:
     image: hashicorp/vault:latest
     container_name: vault
@@ -31,4 +38,4 @@ services:
 
 volumes:
   keycloak_data:
-  vault_data: 
+  vault_data:
