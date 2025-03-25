@@ -4,23 +4,18 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:latest
     container_name: keycloak
-    command: >
-      start-dev
-      -Dkeycloak.migration.action=import
-      -Dkeycloak.migration.provider=singleFile
-      -Dkeycloak.migration.file=/tmp/realm-export.json
-      -Dkeycloak.migration.strategy=OVERWRITE_EXISTING
+    command: start-dev --import-realm
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
-      KC_HOSTNAME_STRICT: false
-      KC_HOSTNAME_STRICT_HTTPS: false
-      KC_HTTP_ENABLED: true
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
     ports:
       - "8080:8080"
     volumes:
       - keycloak_data:/opt/keycloak/data
-      - ./realm-export.json:/tmp/realm-export.json
+      - ./realm-export.json:/opt/keycloak/data/import/realm-export.json
 
   vault:
     image: hashicorp/vault:latest
@@ -29,7 +24,7 @@ services:
       - IPC_LOCK
     environment:
       VAULT_DEV_ROOT_TOKEN_ID: dev-only-token
-      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
     ports:
       - "8200:8200"
     volumes:
