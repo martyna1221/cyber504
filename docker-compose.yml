@@ -16,6 +16,10 @@ services:
     volumes:
       - keycloak_data:/opt/keycloak/data
       - ./realm-export.json:/opt/keycloak/data/import/realm-export.json
+      - ./keys:/opt/keycloak/keys
+
+    depends_on:
+      - vault
 
   vault:
     image: hashicorp/vault:latest
@@ -30,6 +34,24 @@ services:
     volumes:
       - vault_data:/vault/data
     command: server -dev
+
+  rotate-keys:
+    build:
+      context: ./rotate-keys
+    container_name: rotate-keys
+    volumes:
+      - ./rotate-keys:/scripts
+    depends_on:
+      - vault
+
+  sync-key:
+    build:
+      context: ./sync-key
+    container_name: sync-key
+    volumes:
+      - ./keys:/keys
+    depends_on:
+      - vault
 
 volumes:
   keycloak_data:
