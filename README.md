@@ -22,3 +22,6 @@ Project specifications document: https://docs.google.com/document/d/1I36S6lHBOS_
 - Created user username: `eggbtr` & password: `345` -> can login here: `http://localhost:8080/realms/cyber/account`
 - Statically generated JWT can be seen by going into Inspect -> Network -> token -> Response -> access_token
 - You can use this tool (https://www.jstoolset.com/jwt) to decode JWTs
+
+04/8/2025
+** I will update this. I am tired.
