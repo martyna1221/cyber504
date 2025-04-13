@@ -25,11 +25,9 @@ def index():
         last_name = user.get("family_name", "")
         username = user.get("preferred_username", "User")
         full_name = f"{first_name} {last_name}".strip()
-        return f"""
-        <h1>Welcome, {full_name or username}!</h1>
-        <p>You are signed in.</p>
-        <a href="/logout">Logout</a>
-        """
+        return render_template("index.html", 
+                               full_name=full_name,
+                               username=username)
     return redirect(url_for("login"))
 
 @app.route("/login", methods=["GET", "POST"])
