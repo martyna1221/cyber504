@@ -15,6 +15,11 @@ app = Flask(__name__)
 # Set Flask secret key
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "default-secret-key")
 
+# Vault configuration
+VAULT_ADDR = os.getenv('VAULT_ADDR', 'http://vault:8200')
+VAULT_TOKEN = os.getenv('VAULT_TOKEN', 'dev-only-token')
+VAULT_SECRET_PATH = os.getenv('VAULT_SECRET_PATH', 'secret/test-client')
+
 # Keycloak configuration
 KEYCLOAK_PUBLIC_HOST = 'localhost'
 KEYCLOAK_INTERNAL_HOST = 'keycloak'
@@ -25,26 +30,43 @@ KEYCLOAK_ADMIN_PASSWORD = 'admin'
 
 # Initialize Keycloak client secret
 KEYCLOAK_CLIENT_SECRET = None
+SECRET_REGEN_INTERVAL = 30 * 60  # 30 minutes in seconds
 
 def wait_for_keycloak():
     """Wait for Keycloak to be ready"""
-    max_retries = 30
-    retry_delay = 2
+    max_retries = 30  # Increased from 10 to 30
+    retry_delay = 5   # Increased from 2 to 5 seconds
     
     for attempt in range(1, max_retries + 1):
         try:
             logger.info(f"Checking Keycloak readiness (attempt {attempt}/{max_retries})")
-            response = requests.get(f"http://{KEYCLOAK_INTERNAL_HOST}:8080/health/ready", timeout=5)
+            # Try to access the admin console or realm endpoint
+            response = requests.get(
+                f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/master/console",
+                timeout=5
+            )
+            
             if response.status_code == 200:
                 logger.info("Keycloak is ready")
                 return True
-        except Exception as e:
-            logger.warning(f"Keycloak not ready yet: {e}")
-            if attempt < max_retries:
-                time.sleep(retry_delay)
             else:
-                logger.error("Max retries reached waiting for Keycloak")
-                return False
+                logger.warning(f"Keycloak check returned status {response.status_code}")
+                logger.warning(f"Response: {response.text}")
+                
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(f"Connection error while checking Keycloak: {e}")
+        except requests.exceptions.Timeout as e:
+            logger.warning(f"Timeout while checking Keycloak: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected error while checking Keycloak: {e}")
+            
+        if attempt < max_retries:
+            logger.info(f"Waiting {retry_delay} seconds before next attempt...")
+            time.sleep(retry_delay)
+        else:
+            logger.error("Max retries reached waiting for Keycloak")
+            return False
+            
     return False
 
 def get_keycloak_token():
@@ -56,16 +78,76 @@ def get_keycloak_token():
             "username": KEYCLOAK_ADMIN_USER,
             "password": KEYCLOAK_ADMIN_PASSWORD
         }
+        
+        logger.info("Attempting to get admin token from Keycloak")
         response = requests.post(
             f"http://{KEYCLOAK_INTERNAL_HOST}:8080/realms/master/protocol/openid-connect/token",
             data=data,
             timeout=10
         )
-        response.raise_for_status()
-        return response.json()["access_token"]
-    except Exception as e:
-        logger.error(f"Error getting Keycloak admin token: {e}")
+        
+        if response.status_code == 200:
+            token = response.json()["access_token"]
+            logger.info("Successfully obtained admin token from Keycloak")
+            return token
+        else:
+            logger.error(f"Failed to get admin token. Status code: {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            return None
+            
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Connection error while getting admin token: {e}")
         return None
+    except requests.exceptions.Timeout as e:
+        logger.error(f"Timeout while getting admin token: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error while getting admin token: {e}")
+        return None
+
+def initialize_vault_client():
+    """Initialize the Vault client"""
+    try:
+        logger.info("Initializing Vault client")
+        client = hvac.Client(
+            url=VAULT_ADDR,
+            token=VAULT_TOKEN
+        )
+        
+        # Check if the client is authenticated
+        if not client.is_authenticated():
+            logger.error("Vault client is not authenticated")
+            return None
+            
+        logger.info("Successfully initialized Vault client")
+        return client
+    except Exception as e:
+        logger.error(f"Error initializing Vault client: {e}")
+        return None
+
+def store_secret_in_vault(vault_client, secret):
+    """Store the client secret in Vault"""
+    try:
+        logger.info(f"Attempting to store secret in Vault at path secret/data/test-client")
+        # Create the secret data
+        secret_data = {
+            "data": {
+                "client_secret": secret
+            }
+        }
+        logger.info("Prepared secret data for Vault")
+        
+        # Write the secret to Vault
+        response = vault_client.secrets.kv.v2.create_or_update_secret(
+            path="test-client",
+            secret=secret_data
+        )
+        logger.info(f"Vault response: {response}")
+        logger.info("Successfully stored secret in Vault")
+        return True
+    except Exception as e:
+        logger.error(f"Error storing secret in Vault: {e}")
+        return False
 
 def get_client_secret():
     """Get client secret from Keycloak and store it in Vault"""
@@ -80,58 +162,60 @@ def get_client_secret():
             # Get admin token
             admin_token = get_keycloak_token()
             if not admin_token:
+                logger.error("Failed to get admin token")
                 raise Exception("Failed to get admin token")
+            logger.info("Successfully obtained admin token")
             
-            # First, verify the realm exists
+            # Get client ID first
             headers = {
                 "Authorization": f"Bearer {admin_token}",
                 "Content-Type": "application/json"
             }
-            realm_response = requests.get(
-                f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}",
-                headers=headers,
-                timeout=10
-            )
-            if realm_response.status_code != 200:
-                logger.error(f"Realm {KEYCLOAK_REALM} not found or not accessible. Status: {realm_response.status_code}")
-                raise Exception(f"Realm {KEYCLOAK_REALM} not found")
-            
-            # Then, verify the client exists
-            client_response = requests.get(
+            logger.info(f"Getting client ID for {KEYCLOAK_CLIENT_ID}")
+            response = requests.get(
                 f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients",
                 headers=headers,
                 timeout=10
             )
-            if client_response.status_code != 200:
-                logger.error(f"Failed to get clients. Status: {client_response.status_code}")
-                raise Exception("Failed to get clients")
+            response.raise_for_status()
             
-            clients = client_response.json()
-            client_exists = any(client["clientId"] == KEYCLOAK_CLIENT_ID for client in clients)
-            if not client_exists:
-                logger.error(f"Client {KEYCLOAK_CLIENT_ID} not found in realm {KEYCLOAK_REALM}")
+            clients = response.json()
+            client = next((c for c in clients if c["clientId"] == KEYCLOAK_CLIENT_ID), None)
+            
+            if not client:
+                logger.error(f"Client {KEYCLOAK_CLIENT_ID} not found")
                 raise Exception(f"Client {KEYCLOAK_CLIENT_ID} not found")
             
+            client_id = client["id"]
+            logger.info(f"Found client ID: {client_id}")
+            
             # Get client secret
-            secret_response = requests.get(
-                f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients/{KEYCLOAK_CLIENT_ID}/client-secret",
+            logger.info(f"Getting client secret for client ID {client_id}")
+            response = requests.get(
+                f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients/{client_id}/client-secret",
                 headers=headers,
                 timeout=10
             )
+            logger.info(f"Keycloak response status: {response.status_code}")
+            logger.info(f"Keycloak response body: {response.text}")
+            response.raise_for_status()
             
-            if secret_response.status_code != 200:
-                logger.error(f"Failed to get client secret. Status: {secret_response.status_code}, Response: {secret_response.text}")
-                raise Exception(f"Failed to get client secret: {secret_response.text}")
-            
-            secret_data = secret_response.json()
+            secret_data = response.json()
             if "value" in secret_data:
                 KEYCLOAK_CLIENT_SECRET = secret_data["value"]
                 logger.info("Successfully retrieved client secret from Keycloak")
                 
                 # Store secret in Vault
+                logger.info("Attempting to store secret in Vault")
                 vault_client = initialize_vault_client()
                 if vault_client:
-                    store_secret_in_vault(vault_client, KEYCLOAK_CLIENT_SECRET)
+                    logger.info("Successfully initialized Vault client")
+                    if store_secret_in_vault(vault_client, KEYCLOAK_CLIENT_SECRET):
+                        logger.info("Successfully stored secret in Vault")
+                    else:
+                        logger.error("Failed to store secret in Vault")
+                else:
+                    logger.error("Failed to initialize Vault client")
                 
                 return KEYCLOAK_CLIENT_SECRET
             else:
@@ -212,9 +296,9 @@ TOKEN_URL = f"http://{KEYCLOAK_INTERNAL_HOST}:8080/realms/{KEYCLOAK_REALM}/proto
 USERINFO_URL = f"http://{KEYCLOAK_INTERNAL_HOST}:8080/realms/{KEYCLOAK_REALM}/protocol/openid-connect/userinfo"
 LOGOUT_URL = f"http://{KEYCLOAK_PUBLIC_HOST}:8080/realms/{KEYCLOAK_REALM}/protocol/openid-connect/logout"
 
-@app.before_first_request
+# Initialize the application
 def initialize_app():
-    """Initialize the application before the first request"""
+    """Initialize the application"""
     global KEYCLOAK_CLIENT_SECRET
     if not KEYCLOAK_CLIENT_SECRET:
         logger.info("Initializing application configuration...")
@@ -224,11 +308,17 @@ def initialize_app():
             logger.error("Failed to wait for Keycloak")
             return
         
-        # Get client secret from Keycloak
+        # Get client secret from Keycloak and store in Vault
         KEYCLOAK_CLIENT_SECRET = get_client_secret()
         if not KEYCLOAK_CLIENT_SECRET:
             logger.error("Failed to get client secret from Keycloak")
             return
+            
+        # Schedule secret regeneration
+        threading.Timer(SECRET_REGEN_INTERVAL, regenerate_client_secret).start()
+
+# Initialize the app when it starts
+initialize_app()
 
 @app.route("/health")
 def health_check():

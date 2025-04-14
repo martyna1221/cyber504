@@ -5,115 +5,84 @@ services:
     image: quay.io/keycloak/keycloak:latest
     container_name: keycloak
     environment:
-      KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
-      KC_HOSTNAME: localhost
-      KC_HOSTNAME_STRICT: "false"
-      KC_PROXY: edge
-      KC_HTTP_ENABLED: "true"
-      KC_IMPORT: /opt/keycloak/data/import/realm-export.json
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_PROXY=edge
+      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME_STRICT_HTTPS=false
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+      - KC_IMPORT=/opt/keycloak/data/import/realm-export.json
     ports:
       - "8080:8080"
     volumes:
       - ./realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloak_data:/opt/keycloak/data
     command: start-dev --import-realm
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 30s
+      retries: 10
+      start_period: 60s
     networks:
       - cyber-network
 
   vault:
-    image: hashicorp/vault:1.19.1
+    image: hashicorp/vault:latest
     container_name: vault
-    cap_add:
-      - IPC_LOCK
-    environment:
-      VAULT_DEV_ROOT_TOKEN_ID: dev-only-token
-      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
-      VAULT_DEV_TLS_DISABLE: "true"
     ports:
       - "8200:8200"
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=dev-only-token
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
     volumes:
-      - ./vault:/vault
-    command: sh -c "apk add --no-cache curl && vault server -dev"
+      - ./vault/data:/vault/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8200/v1/sys/health"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 30s
+      retries: 5
+    command: server -dev -dev-root-token-id=dev-only-token
     networks:
       - cyber-network
-    depends_on:
-      - keycloak
-    entrypoint: |
-      sh -c '
-        # Install curl
-        apk add --no-cache curl
-        
-        # Start Vault server
-        vault server -dev -dev-listen-address=0.0.0.0:8200 &
-        
-        # Wait for Vault to be ready
-        while ! curl -s -f http://localhost:8200/v1/sys/health > /dev/null; do
-          echo "Waiting for Vault to be ready..."
-          sleep 1
-        done
-        
-        # Set up environment
-        export VAULT_ADDR=http://localhost:8200
-        export VAULT_TOKEN=dev-only-token
-        
-        # Enable KV v2 secrets engine
-        echo "Enabling KV v2 secrets engine..."
-        vault secrets enable -version=2 kv
-        
-        # Create initial secret
-        echo "Creating initial secret..."
-        vault kv put secret/test-client initialized=true
-        
-        # Create ready file
-        touch /tmp/vault-ready
-        
-        # Keep container running
-        wait
-      '
 
-  flask_app:
-    build:
+  flask:
+    build: 
       context: .
       dockerfile: Dockerfile
-    container_name: flask_app
+    container_name: flask
     ports:
       - "5000:5000"
     environment:
       - FLASK_APP=app.py
       - FLASK_ENV=development
+      - FLASK_DEBUG=1
       - VAULT_ADDR=http://vault:8200
       - VAULT_TOKEN=dev-only-token
       - VAULT_SECRET_PATH=secret/test-client
-      - FLASK_SECRET_KEY=your-secret-key-here
-    depends_on:
-      vault:
-        condition: service_healthy
-      keycloak:
-        condition: service_healthy
-    env_file:
-      - .env
-    networks:
-      - cyber-network
+      - KEYCLOAK_PUBLIC_HOST=localhost
+      - KEYCLOAK_INTERNAL_HOST=keycloak
+      - KEYCLOAK_REALM=cyber
+      - KEYCLOAK_CLIENT_ID=test-client
+      - KEYCLOAK_ADMIN_USER=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
     volumes:
-      - ./:/app
+      - .:/app
+    depends_on:
+      - keycloak
+      - vault
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 30s
+      retries: 5
+    env_file:
+      - .env
+    networks:
+      - cyber-network
     restart: unless-stopped
 
 networks:
