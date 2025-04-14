@@ -147,6 +147,41 @@
   "clientPolicies": {
     "policies": []
   },
+  "clients": [
+    {
+      "id": "test-client",
+      "clientId": "test-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "test-secret",
+      "redirectUris": [
+        "http://localhost:5000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5000"
+      ],
+      "protocol": "openid-connect",
+      "attributes": {
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false"
+      },
+      "authenticationFlowBindingOverrides": {},
+      "fullScopeAllowed": true,
+      "nodeReRegistrationTimeout": -1,
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    }
+  ],
   "users": [
     {
       "id": "11c2c70e-6ba6-4f5f-9d01-60703bb9e2af",

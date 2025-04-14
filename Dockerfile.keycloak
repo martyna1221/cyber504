@@ -1,0 +1,15 @@
+FROM quay.io/keycloak/keycloak:latest
+
+USER root
+
+# Install necessary tools
+RUN microdnf install -y curl jq && \
+    microdnf clean all
+
+USER 1000
+
+# Copy the entrypoint script
+COPY keycloak-entrypoint.sh /opt/keycloak-entrypoint.sh
+RUN chmod +x /opt/keycloak-entrypoint.sh
+
+ENTRYPOINT ["/opt/keycloak-entrypoint.sh"] 
