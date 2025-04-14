@@ -5,6 +5,7 @@ import time
 import logging
 import threading
 from flask import Flask, render_template, request, redirect, session, url_for, flash, jsonify
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,34 +35,23 @@ SECRET_REGEN_INTERVAL = 30 * 60  # 30 minutes in seconds
 
 def wait_for_keycloak():
     """Wait for Keycloak to be ready"""
-    max_retries = 30  # Increased from 10 to 30
-    retry_delay = 5   # Increased from 2 to 5 seconds
+    max_retries = 15
+    retry_delay = 5
     
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"Checking Keycloak readiness (attempt {attempt}/{max_retries})")
-            # Try to access the admin console or realm endpoint
             response = requests.get(
                 f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/master/console",
                 timeout=5
             )
             
             if response.status_code == 200:
-                logger.info("Keycloak is ready")
                 return True
-            else:
-                logger.warning(f"Keycloak check returned status {response.status_code}")
-                logger.warning(f"Response: {response.text}")
                 
-        except requests.exceptions.ConnectionError as e:
-            logger.warning(f"Connection error while checking Keycloak: {e}")
-        except requests.exceptions.Timeout as e:
-            logger.warning(f"Timeout while checking Keycloak: {e}")
         except Exception as e:
-            logger.warning(f"Unexpected error while checking Keycloak: {e}")
+            logger.warning(f"Keycloak not ready: {e}")
             
         if attempt < max_retries:
-            logger.info(f"Waiting {retry_delay} seconds before next attempt...")
             time.sleep(retry_delay)
         else:
             logger.error("Max retries reached waiting for Keycloak")
@@ -79,7 +69,6 @@ def get_keycloak_token():
             "password": KEYCLOAK_ADMIN_PASSWORD
         }
         
-        logger.info("Attempting to get admin token from Keycloak")
         response = requests.post(
             f"http://{KEYCLOAK_INTERNAL_HOST}:8080/realms/master/protocol/openid-connect/token",
             data=data,
@@ -87,39 +76,27 @@ def get_keycloak_token():
         )
         
         if response.status_code == 200:
-            token = response.json()["access_token"]
-            logger.info("Successfully obtained admin token from Keycloak")
-            return token
+            return response.json()["access_token"]
         else:
-            logger.error(f"Failed to get admin token. Status code: {response.status_code}")
-            logger.error(f"Response: {response.text}")
+            logger.error(f"Failed to get admin token. Status: {response.status_code}")
             return None
             
-    except requests.exceptions.ConnectionError as e:
-        logger.error(f"Connection error while getting admin token: {e}")
-        return None
-    except requests.exceptions.Timeout as e:
-        logger.error(f"Timeout while getting admin token: {e}")
-        return None
     except Exception as e:
-        logger.error(f"Unexpected error while getting admin token: {e}")
+        logger.error(f"Error getting admin token: {e}")
         return None
 
 def initialize_vault_client():
     """Initialize the Vault client"""
     try:
-        logger.info("Initializing Vault client")
         client = hvac.Client(
             url=VAULT_ADDR,
             token=VAULT_TOKEN
         )
         
-        # Check if the client is authenticated
         if not client.is_authenticated():
-            logger.error("Vault client is not authenticated")
+            logger.error("Vault client not authenticated")
             return None
             
-        logger.info("Successfully initialized Vault client")
         return client
     except Exception as e:
         logger.error(f"Error initializing Vault client: {e}")
@@ -128,22 +105,16 @@ def initialize_vault_client():
 def store_secret_in_vault(vault_client, secret):
     """Store the client secret in Vault"""
     try:
-        logger.info(f"Attempting to store secret in Vault at path secret/data/test-client")
-        # Create the secret data
         secret_data = {
             "data": {
                 "client_secret": secret
             }
         }
-        logger.info("Prepared secret data for Vault")
         
-        # Write the secret to Vault
-        response = vault_client.secrets.kv.v2.create_or_update_secret(
+        vault_client.secrets.kv.v2.create_or_update_secret(
             path="test-client",
             secret=secret_data
         )
-        logger.info(f"Vault response: {response}")
-        logger.info("Successfully stored secret in Vault")
         return True
     except Exception as e:
         logger.error(f"Error storing secret in Vault: {e}")
@@ -157,21 +128,15 @@ def get_client_secret():
     
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"Getting client secret from Keycloak (attempt {attempt}/{max_retries})")
-            
-            # Get admin token
             admin_token = get_keycloak_token()
             if not admin_token:
-                logger.error("Failed to get admin token")
                 raise Exception("Failed to get admin token")
-            logger.info("Successfully obtained admin token")
             
-            # Get client ID first
             headers = {
                 "Authorization": f"Bearer {admin_token}",
                 "Content-Type": "application/json"
             }
-            logger.info(f"Getting client ID for {KEYCLOAK_CLIENT_ID}")
+            
             response = requests.get(
                 f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients",
                 headers=headers,
@@ -183,113 +148,93 @@ def get_client_secret():
             client = next((c for c in clients if c["clientId"] == KEYCLOAK_CLIENT_ID), None)
             
             if not client:
-                logger.error(f"Client {KEYCLOAK_CLIENT_ID} not found")
                 raise Exception(f"Client {KEYCLOAK_CLIENT_ID} not found")
             
             client_id = client["id"]
-            logger.info(f"Found client ID: {client_id}")
             
-            # Get client secret
-            logger.info(f"Getting client secret for client ID {client_id}")
             response = requests.get(
                 f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients/{client_id}/client-secret",
                 headers=headers,
                 timeout=10
             )
-            logger.info(f"Keycloak response status: {response.status_code}")
-            logger.info(f"Keycloak response body: {response.text}")
             response.raise_for_status()
             
             secret_data = response.json()
             if "value" in secret_data:
                 KEYCLOAK_CLIENT_SECRET = secret_data["value"]
-                logger.info("Successfully retrieved client secret from Keycloak")
                 
-                # Store secret in Vault
-                logger.info("Attempting to store secret in Vault")
                 vault_client = initialize_vault_client()
-                if vault_client:
-                    logger.info("Successfully initialized Vault client")
-                    if store_secret_in_vault(vault_client, KEYCLOAK_CLIENT_SECRET):
-                        logger.info("Successfully stored secret in Vault")
-                    else:
-                        logger.error("Failed to store secret in Vault")
-                else:
-                    logger.error("Failed to initialize Vault client")
-                
-                return KEYCLOAK_CLIENT_SECRET
-            else:
-                logger.error(f"No secret value in response: {secret_data}")
-                raise Exception("No secret value in response")
+                if vault_client and store_secret_in_vault(vault_client, KEYCLOAK_CLIENT_SECRET):
+                    return KEYCLOAK_CLIENT_SECRET
                 
         except Exception as e:
             logger.error(f"Error getting client secret: {e}")
             if attempt < max_retries:
-                logger.info(f"Waiting {retry_delay} seconds before retry...")
                 time.sleep(retry_delay)
             else:
-                logger.error("Max retries reached getting client secret")
                 return None
+                
+    return None
 
-def regenerate_client_secret():
-    """Regenerate the client secret and update it in Vault"""
-    global KEYCLOAK_CLIENT_SECRET
-    
-    try:
-        logger.info("Regenerating client secret...")
-        
-        # Get admin token
-        admin_token = get_keycloak_token()
-        if not admin_token:
-            logger.error("Failed to get admin token for secret regeneration")
-            return
-        
-        # Regenerate client secret
-        headers = {
-            "Authorization": f"Bearer {admin_token}",
-            "Content-Type": "application/json"
-        }
-        response = requests.post(
-            f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients/{KEYCLOAK_CLIENT_ID}/client-secret",
-            headers=headers,
-            timeout=10
-        )
-        response.raise_for_status()
-        
-        secret_data = response.json()
-        if "value" in secret_data:
-            KEYCLOAK_CLIENT_SECRET = secret_data["value"]
-            logger.info("Successfully regenerated client secret")
+def rotate_secret_periodically():
+    """Background thread to rotate the client secret every 30 minutes"""
+    while True:
+        try:
+            admin_token = get_keycloak_token()
+            if not admin_token:
+                time.sleep(300)
+                continue
+
+            headers = {
+                "Authorization": f"Bearer {admin_token}",
+                "Content-Type": "application/json"
+            }
             
-            # Store new secret in Vault with retries
-            max_vault_retries = 3
-            vault_retry_delay = 5
+            response = requests.get(
+                f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients",
+                headers=headers,
+                timeout=10
+            )
+            response.raise_for_status()
             
-            for vault_attempt in range(1, max_vault_retries + 1):
-                try:
-                    logger.info(f"Attempting to store secret in Vault (attempt {vault_attempt}/{max_vault_retries})")
-                    vault_client = initialize_vault_client()
-                    if vault_client:
-                        if store_secret_in_vault(vault_client, KEYCLOAK_CLIENT_SECRET):
-                            logger.info("Successfully updated secret in Vault")
-                            break
-                    else:
-                        logger.error("Failed to initialize Vault client")
-                except Exception as e:
-                    logger.error(f"Error storing secret in Vault: {e}")
-                    if vault_attempt < max_vault_retries:
-                        logger.info(f"Waiting {vault_retry_delay} seconds before retry...")
-                        time.sleep(vault_retry_delay)
-                    else:
-                        logger.error("Max retries reached for Vault storage")
-        else:
-            logger.error("No secret value in regeneration response")
+            clients = response.json()
+            client = next((c for c in clients if c["clientId"] == KEYCLOAK_CLIENT_ID), None)
             
-    except Exception as e:
-        logger.error(f"Error regenerating client secret: {e}")
-    
-    # Schedule next regeneration
-    threading.Timer(SECRET_REGEN_INTERVAL, regenerate_client_secret).start()
+            if not client:
+                time.sleep(300)
+                continue
+            
+            client_id = client["id"]
+            
+            response = requests.post(
+                f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients/{client_id}/client-secret",
+                headers=headers,
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            response = requests.get(
+                f"http://{KEYCLOAK_INTERNAL_HOST}:8080/admin/realms/{KEYCLOAK_REALM}/clients/{client_id}/client-secret",
+                headers=headers,
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            secret_data = response.json()
+            if "value" in secret_data:
+                new_secret = secret_data["value"]
+                
+                vault_client = initialize_vault_client()
+                if vault_client:
+                    if store_secret_in_vault(vault_client, new_secret):
+                        global KEYCLOAK_CLIENT_SECRET
+                        KEYCLOAK_CLIENT_SECRET = new_secret
+                        logger.info(f"Secret rotated at {datetime.now()}")
+            
+        except Exception as e:
+            logger.error(f"Secret rotation error: {e}")
+        
+        time.sleep(1800)
 
 # Construct URLs
 TOKEN_URL = f"http://{KEYCLOAK_INTERNAL_HOST}:8080/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
@@ -315,7 +260,7 @@ def initialize_app():
             return
             
         # Schedule secret regeneration
-        threading.Timer(SECRET_REGEN_INTERVAL, regenerate_client_secret).start()
+        threading.Timer(SECRET_REGEN_INTERVAL, rotate_secret_periodically).start()
 
 # Initialize the app when it starts
 initialize_app()
@@ -424,4 +369,9 @@ def logout():
         return redirect(url_for("login"))
 
 if __name__ == "__main__":
+    # Start the secret rotation thread
+    rotation_thread = threading.Thread(target=rotate_secret_periodically, daemon=True)
+    rotation_thread.start()
+    
+    # Start the Flask application
     app.run(host="0.0.0.0", port=5000, debug=True)
