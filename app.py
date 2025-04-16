@@ -234,7 +234,7 @@ def rotate_secret_periodically():
         except Exception as e:
             logger.error(f"Secret rotation error: {e}")
         
-        time.sleep(1800)
+        time.sleep(120)
 
 # Construct URLs
 TOKEN_URL = f"http://{KEYCLOAK_INTERNAL_HOST}:8080/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
@@ -331,6 +331,7 @@ def login():
             
             if response.status_code == 200:
                 token = response.json()
+                session["id_token"] = token.get("id_token", None)
                 access_token = token.get("access_token")
                 
                 if not access_token:
@@ -362,8 +363,15 @@ def login():
 @app.route("/logout")
 def logout():
     try:
+        id_token = session.get("id_token", None)
         session.clear()
-        return redirect(LOGOUT_URL)
+        logout_url = (
+            f"http://{KEYCLOAK_PUBLIC_HOST}:8080/realms/{KEYCLOAK_REALM}/protocol/openid-connect/logout"
+            f"?post_logout_redirect_uri=http://localhost:5000/login"
+        )
+        if id_token:
+            logout_url += f"&id_token_hint={id_token}"
+        return redirect(logout_url)
     except Exception as e:
         logger.error(f"Error in logout route: {e}")
         return redirect(url_for("login"))
