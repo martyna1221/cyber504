@@ -1,8 +1,6 @@
 {
   "id": "fbc75f4d-ee8b-4b96-9f61-9b4b410d2e95",
   "realm": "cyber",
-  "displayName": "",
-  "displayNameHtml": "<div class=\"kc-logo-text\"><span>Keycloak</span></div>",
   "notBefore": 0,
   "defaultSignatureAlgorithm": "RS256",
   "revokeRefreshToken": false,
@@ -37,16 +35,16 @@
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": false,
   "editUsernameAllowed": false,
-  "bruteForceProtected": true,
+  "bruteForceProtected": false,
   "permanentLockout": false,
   "maxTemporaryLockouts": 0,
   "bruteForceStrategy": "MULTIPLE",
-  "maxFailureWaitSeconds": 300,
+  "maxFailureWaitSeconds": 900,
   "minimumQuickLoginWaitSeconds": 60,
-  "waitIncrementSeconds": 30,
+  "waitIncrementSeconds": 60,
   "quickLoginCheckMilliSeconds": 1000,
-  "maxDeltaTimeSeconds": 300,
-  "failureFactor": 5,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 30,
   "defaultRole": {
     "id": "0a333644-b2ea-4bd5-a880-58be21f26575",
     "name": "default-roles-cyber",
@@ -127,19 +125,17 @@
   "firstBrokerLoginFlow": "first broker login",
   "attributes": {
     "cibaBackchannelTokenDeliveryMode": "poll",
+    "cibaExpiresIn": "120",
     "cibaAuthRequestedUserHint": "login_hint",
+    "oauth2DeviceCodeLifespan": "600",
     "clientOfflineSessionMaxLifespan": "0",
     "oauth2DevicePollingInterval": "5",
     "clientSessionIdleTimeout": "0",
-    "clientOfflineSessionIdleTimeout": "0",
-    "cibaInterval": "5",
-    "realmReusableOtpCode": "false",
-    "cibaExpiresIn": "120",
-    "oauth2DeviceCodeLifespan": "600",
     "parRequestUriLifespan": "60",
     "clientSessionMaxLifespan": "0",
-    "frontendUrl": "",
-    "acr.loa.map": "{}"
+    "clientOfflineSessionIdleTimeout": "0",
+    "cibaInterval": "5",
+    "realmReusableOtpCode": "false"
   },
   "userManagedAccessAllowed": false,
   "organizationsEnabled": false,
@@ -151,15 +147,50 @@
   "clientPolicies": {
     "policies": []
   },
+  "clients": [
+    {
+      "id": "test-client",
+      "clientId": "test-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "test-secret",
+      "redirectUris": [
+        "http://localhost:5000/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5000"
+      ],
+      "protocol": "openid-connect",
+      "attributes": {
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "false"
+      },
+      "authenticationFlowBindingOverrides": {},
+      "fullScopeAllowed": true,
+      "nodeReRegistrationTimeout": -1,
+      "defaultClientScopes": [
+        "web-origins",
+        "roles",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    }
+  ],
   "users": [
     {
-      "id": "d77749a8-8205-4ffe-81af-7231bb55beab",
+      "id": "11c2c70e-6ba6-4f5f-9d01-60703bb9e2af",
       "username": "eggbtr",
       "firstName": "Keith",
       "lastName": "Harris",
       "email": "keithharris@sandiego.edu",
       "emailVerified": false,
-      "createdTimestamp": 1743044101886,
+      "createdTimestamp": 1743393358721,
       "enabled": true,
       "totp": false,
       "disableableCredentialTypes": [],
@@ -176,15 +207,16 @@
     {
       "id": "c6873b45-7fa0-4ac3-b01c-f307677e58ec",
       "username": "martyna",
+      "firstName": "Martyna",
+      "lastName": "Paruch",
+      "email": "mparuch@sandiego.edu",
       "emailVerified": false,
       "createdTimestamp": 1742878861382,
       "enabled": true,
       "totp": false,
       "disableableCredentialTypes": [],
-      "requiredActions": [
-        "UPDATE_PASSWORD"
-      ],
-      "notBefore": 0,
+      "requiredActions": [],
+      "notBefore": 1744578481,
       "access": {
         "manageGroupMembership": true,
         "view": true,
@@ -213,7 +245,7 @@
         "containerId": "fbc75f4d-ee8b-4b96-9f61-9b4b410d2e95"
       },
       {
-        "id": "4cc8e24b-af3b-4183-af1e-5164f4274751",
+        "id": "80549b89-edf8-4fd1-8c84-0c64cd4ad0f4",
         "name": "offline_access",
         "description": "${role_offline-access}",
         "composite": false,

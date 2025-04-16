@@ -38,7 +38,18 @@ curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/roles" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   > keycloak_${REALM_NAME}_roles.json
 
+echo "Exporting clients..."
+curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
+  -H "Accept: application/json" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  > keycloak_${REALM_NAME}_clients.json
+
 echo "Combining exports..."
-jq -s '.[0] + {users: .[1], roles: {"realm": .[2]}}' keycloak_${REALM_NAME}_realm.json keycloak_${REALM_NAME}_users.json keycloak_${REALM_NAME}_roles.json > realm-export.json
+jq -s '.[0] + {users: .[1], roles: {"realm": .[2]}, clients: .[3]}' \
+  keycloak_${REALM_NAME}_realm.json \
+  keycloak_${REALM_NAME}_users.json \
+  keycloak_${REALM_NAME}_roles.json \
+  keycloak_${REALM_NAME}_clients.json > realm-export.json
 
 echo "Export complete. Files created:"
+ls -l keycloak_${REALM_NAME}_*.json realm-export.json
